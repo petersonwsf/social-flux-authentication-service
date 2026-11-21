@@ -1,0 +1,93 @@
+spring:
+  application:
+    name: authentication-service
+  datasource:
+    url: ${IDENTITY_DB_URL:jdbc:postgresql://localhost:5432/identity}
+    username: ${IDENTITY_DB_USER:identity}
+    password: ${IDENTITY_DB_PASSWORD:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASSWORD:}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    publisher-confirm-type: simple
+    publisher-returns: true
+
+server:
+  port: ${SERVER_PORT:8081}
+  # Atrás do Caddy: respeita X-Forwarded-* (esquema, host e IP do cliente).
+  # O serviço NÃO deve ser exposto diretamente à internet.
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  health:
+    rabbit:
+      enabled: false     # sem broker o auth continua funcionando (o outbox acumula)
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+auth:
+  jwt:
+    issuer: ${JWT_ISSUER:http://localhost:8080}
+    audience: ${JWT_AUDIENCE:socialflux-api}
+    access-ttl: ${JWT_ACCESS_TTL:PT2H}
+    renew-window: ${JWT_RENEW_WINDOW:PT10M}
+    refresh-grace: ${JWT_REFRESH_GRACE:PT5M}
+    session-absolute-max: ${SESSION_ABSOLUTE_MAX:P7D}
+    refresh-reuse-tolerance: ${JWT_REFRESH_REUSE_TOLERANCE:PT10S}
+    clock-skew: ${JWT_CLOCK_SKEW:PT60S}
+    private-key-b64: ${JWT_PRIVATE_KEY_B64:}
+    key-id: ${JWT_KEY_ID:}
+    previous-public-keys-b64: ${JWT_PUBLIC_KEYS_B64:}
+    # Somente desenvolvimento: gera uma chave em memória quando JWT_PRIVATE_KEY_B64 está vazio.
+    allow-ephemeral-key: ${AUTH_ALLOW_EPHEMERAL_KEY:false}
+  cookie:
+    secure: ${AUTH_COOKIE_SECURE:true}
+    access-name: ${AUTH_COOKIE_ACCESS_NAME:__Host-at}
+    refresh-name: ${AUTH_COOKIE_REFRESH_NAME:__Secure-rt}
+    refresh-path: ${AUTH_COOKIE_REFRESH_PATH:/auth}
+  # Origens permitidas para requisições não seguras. Vazio = mesma origem do próprio serviço (via X-Forwarded-*).
+  allowed-origins: ${AUTH_ALLOWED_ORIGINS:}
+  # URL pública do frontend, usada nos links dos e-mails.
+  public-base-url: ${AUTH_PUBLIC_BASE_URL:http://localhost:8080}
+  rate-limit:
+    max-failures-per-account-ip: ${AUTH_RL_ACCOUNT_IP:5}
+    max-failures-per-ip: ${AUTH_RL_IP:50}
+    window: ${AUTH_RL_WINDOW:PT15M}
+  mail:
+    enabled: ${AUTH_MAIL_ENABLED:false}
+    from: ${MAIL_FROM:no-reply@socialflux.local}
+  profile:
+    base-url: ${PROFILE_SERVICE_URL:http://localhost:8082}
+    service-audience: ${PROFILE_SERVICE_AUDIENCE:profile-service}
+    connect-timeout: ${PROFILE_CONNECT_TIMEOUT:PT2S}
+    read-timeout: ${PROFILE_READ_TIMEOUT:PT5S}
+
+# Eventos de conta (account.registered.v1, account.deleted.v1): outbox + RabbitMQ compartilhados (libs/socialflux-events).
+socialflux:
+  events:
+    enabled: ${AUTH_EVENTS_ENABLED:true}
+    exchange: ${EVENTS_EXCHANGE:socialflux.events}
+    # Evento sem nenhuma fila ligada fica pendente no outbox em vez de ser descartado (o profile_service é consumidor obrigatório).
+    mandatory: ${AUTH_EVENTS_MANDATORY:true}
+    relay-interval: ${AUTH_OUTBOX_INTERVAL:PT0.5S}
