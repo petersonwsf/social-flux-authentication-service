@@ -2,6 +2,7 @@ package com.socialflux.auth.profile;
 
 import com.socialflux.auth.config.AuthProperties;
 import com.socialflux.auth.web.ApiException;
+import com.socialflux.events.logging.CorrelationIdClientInterceptor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -37,7 +38,9 @@ public class ProfileClient implements ProfilePort {
         HttpClient http = HttpClient.newBuilder().connectTimeout(profile.connectTimeout()).build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
         factory.setReadTimeout(profile.readTimeout());
-        this.client = RestClient.builder().baseUrl(profile.baseUrl()).requestFactory(factory).build();
+        this.client = RestClient.builder().baseUrl(profile.baseUrl()).requestFactory(factory)
+                .requestInterceptor(new CorrelationIdClientInterceptor())   // o profile_service continua o mesmo fluxo
+                .build();
         this.tokens = tokens;
         this.mapper = mapper;
     }

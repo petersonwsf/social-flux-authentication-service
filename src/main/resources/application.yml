@@ -91,3 +91,15 @@ socialflux:
     # Evento sem nenhuma fila ligada fica pendente no outbox em vez de ser descartado (o profile_service é consumidor obrigatório).
     mandatory: ${AUTH_EVENTS_MANDATORY:true}
     relay-interval: ${AUTH_OUTBOX_INTERVAL:PT0.5S}
+
+logging:
+  pattern:
+    # Id de correlação (libs/socialflux-events) em cada linha do console de desenvolvimento. Em container o log sai em JSON
+    # (LOGGING_STRUCTURED_FORMAT_CONSOLE=logstash, definido no Dockerfile) para o Loki, com o campo `correlationId`.
+    correlation: "[%X{correlationId:-}] "
+  level:
+    com.socialflux: ${LOG_LEVEL:INFO}
+  structured:
+    json:
+      add:
+        service: ${spring.application.name}

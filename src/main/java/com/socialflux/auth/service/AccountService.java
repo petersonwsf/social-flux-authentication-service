@@ -146,6 +146,7 @@ public class AccountService {
     private void compensateProfile(UUID accountId) {
         try {
             profiles.discard(accountId);
+            log.warn("Cadastro desfeito: perfil {} removido por compensação", accountId);
         } catch (RuntimeException e) {
             log.error("Falha ao compensar o perfil {} após erro no cadastro; remover manualmente (perfil PENDING)",
                     accountId, e);
