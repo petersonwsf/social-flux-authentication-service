@@ -57,6 +57,12 @@ mvn -q test-compile dependency:build-classpath -Dmdep.outputFile=target/cp.txt -
 java -cp "target/test-classes;target/classes;$(cat target/cp.txt)" com.socialflux.auth.DevServer   # (use ':' no Linux/macOS)
 ```
 
+## Logs e rastreabilidade
+
+- Toda requisição carrega o `X-Correlation-Id` (o gateway cria; o `CorrelationIdFilter` de `libs/socialflux-events` o põe no MDC e o devolve na resposta) e gera uma linha de acesso (`Requisição GET /caminho respondeu 200 em 12 ms`, sem query string; health checks e `/internal/auth/verify` ficam em DEBUG). O mesmo id vai nos eventos publicados e é retomado por quem os consome, então um fluxo inteiro (ex.: cadastro → perfil → notificações) se acompanha pelo Loki/Grafana procurando o `correlationId`.
+- Em container o log sai em **JSON** (`LOGGING_STRUCTURED_FORMAT_CONSOLE=logstash` no Dockerfile; campos `level`, `message`, `correlationId`, `service`...); no host, texto com o id entre colchetes. `LOG_LEVEL` (padrão `INFO`) controla o código do projeto (`com.socialflux`); `DEBUG` mostra também o que é de alto volume. Nunca vão para o log senhas, tokens, e-mail, telefone, IP ou corpo de requisição.
+- O que este serviço registra: a trilha de auditoria (cada ação vira `Auditoria: <AÇÃO> (conta <uuid>)`; `LOGIN_FAILURE` e `REFRESH_REUSE` em WARN), início e revogação de sessões, renovação recusada, compensação do cadastro (`Cadastro desfeito...`) e a limpeza agendada. As chamadas ao profile_service repassam o `X-Correlation-Id`.
+
 ## Configuração (variáveis de ambiente)
 
 Veja `src/main/resources/application.yml` e o `.env.example` da raiz. Principais:

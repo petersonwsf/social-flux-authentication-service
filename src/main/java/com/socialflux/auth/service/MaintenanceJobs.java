@@ -3,6 +3,7 @@ package com.socialflux.auth.service;
 import com.socialflux.auth.domain.AccountRepository;
 import com.socialflux.auth.domain.EmailTokenRepository;
 import com.socialflux.auth.domain.RefreshTokenRepository;
+import com.socialflux.events.logging.CorrelationId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -37,14 +38,17 @@ public class MaintenanceJobs {
 
     @Scheduled(cron = "0 17 * * * *")
     public void purge() {
-        Instant now = clock.instant();
-        tx.executeWithoutResult(status -> {
-            int refresh = refreshTokens.purgeExpired(now.minus(Duration.ofDays(1)));
-            int email = emailTokens.purgeExpired(now.minus(Duration.ofDays(1)));
-            int deleted = accounts.purgeDeletedBefore(now.minus(Duration.ofDays(1)));
-            if (refresh + email + deleted > 0) {
-                log.info("Limpeza: {} refresh tokens, {} tokens de e-mail, {} contas excluídas", refresh, email, deleted);
-            }
-        });
+        try (CorrelationId.Scope ignored = CorrelationId.open(null)) {   // cada rodada ganha o próprio id nos logs
+            Instant now = clock.instant();
+            tx.executeWithoutResult(status -> {
+                int refresh = refreshTokens.purgeExpired(now.minus(Duration.ofDays(1)));
+                int email = emailTokens.purgeExpired(now.minus(Duration.ofDays(1)));
+                int deleted = accounts.purgeDeletedBefore(now.minus(Duration.ofDays(1)));
+                if (refresh + email + deleted > 0) {
+                    log.info("Limpeza: {} refresh tokens, {} tokens de e-mail, {} contas excluídas", refresh, email,
+                            deleted);
+                }
+            });
+        }
     }
 }

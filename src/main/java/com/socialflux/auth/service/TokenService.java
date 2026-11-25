@@ -8,6 +8,8 @@ import com.socialflux.auth.domain.RefreshTokenRepository;
 import com.socialflux.auth.util.Tokens;
 import com.socialflux.auth.util.Uuids;
 import com.socialflux.auth.web.ApiException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
@@ -35,6 +37,8 @@ import java.util.UUID;
 @Service
 public class TokenService {
 
+    private static final Logger log = LoggerFactory.getLogger(TokenService.class);
+
     private final JwtEncoder encoder;
     private final AuthProperties properties;
     private final AccountRepository accounts;
@@ -60,7 +64,9 @@ public class TokenService {
     public IssuedSession startSession(Account account, ClientInfo client) {
         UUID familyId = Uuids.v7(clock);
         Instant familyExpiresAt = clock.instant().plus(properties.jwt().sessionAbsoluteMax());
-        return issue(account, familyId, familyExpiresAt, client);
+        IssuedSession session = issue(account, familyId, familyExpiresAt, client);
+        log.info("Sessão iniciada (conta {}, família {})", account.getId(), familyId);
+        return session;
     }
 
     /** Renova a sessão a partir do refresh token (rotação). */
@@ -80,11 +86,14 @@ public class TokenService {
         Account account = accounts.findById(current.getAccountId()).orElse(null);
         if (account == null || !account.isActive()) {
             refreshTokens.revokeFamily(current.getFamilyId(), now, "ACCOUNT_INACTIVE");
+            log.info("Renovação recusada: conta {} inativa; sessão {} encerrada", current.getAccountId(),
+                    current.getFamilyId());
             throw ApiException.unauthorized("Sessão encerrada");
         }
 
         if (now.isAfter(current.getFamilyExpiresAt()) || now.isAfter(current.getExpiresAt())) {
             refreshTokens.revokeFamily(current.getFamilyId(), now, "EXPIRED");
+            log.info("Renovação recusada: sessão {} da conta {} expirou", current.getFamilyId(), account.getId());
             throw ApiException.unauthorized("Sessão expirada");
         }
 
@@ -141,6 +150,7 @@ public class TokenService {
         accounts.save(account);
         refreshTokens.revokeAllOfAccount(account.getId(), now, reason);
         revocations.revokeBelow(account.getId(), account.getTokenVersion());
+        log.info("Todas as sessões da conta {} revogadas (motivo {})", account.getId(), reason);
     }
 
     // ----------------------------------------------------------------- internals
