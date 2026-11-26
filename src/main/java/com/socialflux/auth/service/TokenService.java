@@ -22,6 +22,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -102,7 +103,7 @@ public class TokenService {
             if (!withinTolerance) {
                 // Token já usado reapareceu: possível roubo. Derruba toda a família.
                 refreshTokens.revokeFamily(current.getFamilyId(), now, "REUSE_DETECTED");
-                audit.record(account.getId(), "REFRESH_REUSE", client, "family=" + current.getFamilyId());
+                audit.record(account.getId(), "REFRESH_REUSE", client, Map.of("familyId", current.getFamilyId().toString()));
                 throw ApiException.unauthorized("Sessão encerrada");
             }
         } else {
@@ -150,6 +151,7 @@ public class TokenService {
         accounts.save(account);
         refreshTokens.revokeAllOfAccount(account.getId(), now, reason);
         revocations.revokeBelow(account.getId(), account.getTokenVersion());
+        audit.record(account.getId(), "SESSION_REVOKED", ClientInfo.none(), Map.of("reason", reason));
         log.info("Todas as sessões da conta {} revogadas (motivo {})", account.getId(), reason);
     }
 

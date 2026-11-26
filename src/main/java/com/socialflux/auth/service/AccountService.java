@@ -107,6 +107,7 @@ public class AccountService {
                 Account saved = accounts.saveAndFlush(account);
                 outbox.add(EVENT_REGISTERED, accountId, 1, Map.of(
                         "accountId", accountId.toString()));
+                audit.record(accountId, "REGISTER", client, null);
                 return saved;
             });
         } catch (RuntimeException e) {
@@ -117,7 +118,6 @@ public class AccountService {
             throw e;
         }
 
-        audit.record(created.getId(), "REGISTER", client, null);
         sendVerificationEmail(created);
         return created;
     }
@@ -187,7 +187,9 @@ public class AccountService {
             Instant now = clock.instant();
             managed.setLastLoginAt(now);
             managed.setUpdatedAt(now);
-            return accounts.save(managed);
+            Account saved = accounts.save(managed);
+            audit.record(saved.getId(), "LOGIN_SUCCESS", client, null);
+            return saved;
         });
     }
 
@@ -209,8 +211,8 @@ public class AccountService {
             Account managed = accounts.findById(accountId).orElseThrow();
             managed.setPasswordHash(passwords.hash(newPassword));
             tokens.revokeAll(managed, "PASSWORD_CHANGED");
+            audit.record(accountId, "PASSWORD_CHANGE", client, null);
         });
-        audit.record(accountId, "PASSWORD_CHANGE", client, null);
         return accounts.findById(accountId).orElseThrow();
     }
 
@@ -229,7 +231,7 @@ public class AccountService {
                 "Recebemos um pedido para redefinir a sua senha.\n\n"
                         + "Use o link abaixo (válido por 1 hora):\n" + link + "\n\n"
                         + "Se você não fez esse pedido, ignore este e-mail.");
-        audit.record(account.getId(), "PASSWORD_RESET_REQUESTED", client, null);
+        tx.executeWithoutResult(status -> audit.record(account.getId(), "PASSWORD_RESET_REQUESTED", client, null));
     }
 
     public void resetPassword(String token, String newPassword, ClientInfo client) {
@@ -244,8 +246,8 @@ public class AccountService {
             managed.setPasswordHash(passwords.hash(newPassword));
             managed.setEmailVerified(true); // quem recebeu o e-mail comprovou a posse
             tokens.revokeAll(managed, "PASSWORD_RESET");
+            audit.record(account.getId(), "PASSWORD_RESET", client, null);
         });
-        audit.record(account.getId(), "PASSWORD_RESET", client, null);
     }
 
     // ------------------------------------------------------------------- e-mail
@@ -258,8 +260,8 @@ public class AccountService {
             managed.setEmailVerified(true);
             managed.setUpdatedAt(clock.instant());
             accounts.save(managed);
+            audit.record(account.getId(), "EMAIL_VERIFIED", client, null);
         });
-        audit.record(account.getId(), "EMAIL_VERIFIED", client, null);
     }
 
     public void resendVerification(UUID accountId) {
@@ -340,9 +342,9 @@ public class AccountService {
             accounts.save(managed);
             refreshTokens.revokeAllOfAccount(accountId, clock.instant(), "ACCOUNT_DELETED");
             outbox.add(EVENT_DELETED, accountId, managed.getTokenVersion(), Map.of("accountId", accountId.toString()));
+            audit.record(accountId, "ACCOUNT_DELETED", client, null);
         });
         revocations.revokeBelow(accountId, Integer.MAX_VALUE);
-        audit.record(accountId, "ACCOUNT_DELETED", client, null);
     }
 
     // ------------------------------------------------------------------- helpers
