@@ -91,6 +91,12 @@ socialflux:
     # Evento sem nenhuma fila ligada fica pendente no outbox em vez de ser descartado (o profile_service é consumidor obrigatório).
     mandatory: ${AUTH_EVENTS_MANDATORY:true}
     relay-interval: ${AUTH_OUTBOX_INTERVAL:PT0.5S}
+  # Auditoria central (libs/socialflux-audit): os eventos vão para a outbox local e um relay os envia ao audit-service.
+  audit:
+    enabled: ${AUDIT_ENABLED:false}
+    url: ${AUDIT_URL:http://audit-service:8090}
+    api-key: ${AUDIT_API_KEY:}
+    service-name: auth
 
 logging:
   pattern:

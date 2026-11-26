@@ -48,7 +48,7 @@ docker compose up -d --build      # http://localhost:8080 (caixa de e-mail: http
 ### Sem Docker (testes e depuração)
 Os testes de integração usam um **PostgreSQL real embutido** (zonky), sem precisar de Docker:
 ```bash
-mvn test        # na pasta do serviço, depois de instalar a biblioteca: mvn -f ../libs/socialflux-events/pom.xml install
+mvn test        # na pasta do serviço, depois de instalar a biblioteca: mvn -f ../libs/socialflux-events/pom.xml install && mvn -f ../libs/socialflux-audit/pom.xml install
 # ou, na raiz: mvn -pl authentication_service -am test
 ```
 E há um servidor de desenvolvimento com Postgres embutido, chave efêmera, perfil em memória e e-mails no log:
@@ -61,7 +61,7 @@ java -cp "target/test-classes;target/classes;$(cat target/cp.txt)" com.socialflu
 
 - Toda requisição carrega o `X-Correlation-Id` (o gateway cria; o `CorrelationIdFilter` de `libs/socialflux-events` o põe no MDC e o devolve na resposta) e gera uma linha de acesso (`Requisição GET /caminho respondeu 200 em 12 ms`, sem query string; health checks e `/internal/auth/verify` ficam em DEBUG). O mesmo id vai nos eventos publicados e é retomado por quem os consome, então um fluxo inteiro (ex.: cadastro → perfil → notificações) se acompanha pelo Loki/Grafana procurando o `correlationId`.
 - Em container o log sai em **JSON** (`LOGGING_STRUCTURED_FORMAT_CONSOLE=logstash` no Dockerfile; campos `level`, `message`, `correlationId`, `service`...); no host, texto com o id entre colchetes. `LOG_LEVEL` (padrão `INFO`) controla o código do projeto (`com.socialflux`); `DEBUG` mostra também o que é de alto volume. Nunca vão para o log senhas, tokens, e-mail, telefone, IP ou corpo de requisição.
-- O que este serviço registra: a trilha de auditoria (cada ação vira `Auditoria: <AÇÃO> (conta <uuid>)`; `LOGIN_FAILURE` e `REFRESH_REUSE` em WARN), início e revogação de sessões, renovação recusada, compensação do cadastro (`Cadastro desfeito...`) e a limpeza agendada. As chamadas ao profile_service repassam o `X-Correlation-Id`.
+- O que este serviço registra: a trilha de auditoria (cada ação vira `Auditoria: <AÇÃO> (conta <uuid>)`; `LOGIN_FAILURE` e `REFRESH_REUSE` em WARN; o evento em si vai ao audit-service, ver *Auditoria central*), início e revogação de sessões, renovação recusada, compensação do cadastro (`Cadastro desfeito...`) e a limpeza agendada. As chamadas ao profile_service repassam o `X-Correlation-Id`.
 
 ## Configuração (variáveis de ambiente)
 
@@ -79,6 +79,7 @@ Veja `src/main/resources/application.yml` e o `.env.example` da raiz. Principais
 | `AUTH_MAIL_ENABLED`, `SMTP_*`, `MAIL_FROM` | E-mail |
 | `PROFILE_SERVICE_URL`, `PROFILE_SERVICE_AUDIENCE` | profile_service (cadastro) e a audiência do token de serviço |
 | `RABBITMQ_HOST/PORT/USER/PASSWORD`, `EVENTS_EXCHANGE`, `AUTH_EVENTS_ENABLED`, `AUTH_EVENTS_MANDATORY` | Eventos de conta (outbox → RabbitMQ) |
+| `AUDIT_ENABLED`, `AUDIT_URL`, `AUDIT_API_KEY` | Auditoria central: liga o envio, URL do audit-service (`http://audit-service:8090`, rede `audit-net`) e a chave da aplicação `social-flux` (segredo, só no `.env`) |
 | `AUTH_ALLOWED_ORIGINS` | Origens permitidas em métodos não seguros (vazio = a própria origem) |
 
 ### Gerar a chave
@@ -95,6 +96,24 @@ Veja `src/main/resources/application.yml` e o `.env.example` da raiz. Principais
 ### Cuidados com segredos em variáveis de ambiente
 Ficam visíveis em `docker inspect`/`/proc` e exigem reinício para trocar. Mantenha o `.env` fora do Git (já no `.gitignore`),
 com permissão restrita; não exponha `env`/`configprops` no Actuator (já só `health`); nunca logue propriedades.
+
+## Auditoria central
+
+A trilha de auditoria vai para o **audit-service** (aplicação `social-flux`, serviço `auth`) pela biblioteca `libs/socialflux-audit`:
+cada evento é gravado na tabela `audit_outbox` e um relay o envia em lote. Se o audit-service cair, os eventos esperam na outbox.
+Com `AUDIT_ENABLED=false` (padrão) o envio fica desligado.
+
+| Ação | Resultado | Modo |
+| --- | --- | --- |
+| `REGISTER`, `LOGIN_SUCCESS`, `PASSWORD_CHANGE`, `PASSWORD_RESET_REQUESTED`, `PASSWORD_RESET`, `EMAIL_VERIFIED`, `ACCOUNT_DELETED`, `LOGOUT`, `SESSION_REVOKED` (`detail.reason`) | `SUCCESS` | `inTransaction`: na transação da ação |
+| `LOGIN_FAILURE` | `FAILURE` | `independent`: sobrevive ao rollback |
+| `REFRESH_REUSE` (`detail.familyId`) | `DENIED` | `independent` |
+
+Os eventos levam o id da conta, IP e user agent (só para o audit-service; nunca para o log) e nunca e-mail, senha ou token.
+A migração `V4__audit_outbox.sql` cria a outbox e **copia o histórico de `audit_event`** (eventId determinístico: repetir a
+cópia não duplica). Os eventos com mais de 180 dias são recusados pelo audit-service (`AUDIT_MAX_PAST_AGE`) e ficam como
+falhos na outbox. A tabela `audit_event` não recebe mais gravações; será removida numa migração posterior, depois de conferido
+que o histórico chegou ao audit-service.
 
 ## Cadastro, perfil e eventos (D1: o auth orquestra)
 
@@ -115,7 +134,7 @@ ligada fica **pendente** no outbox em vez de ser descartado (o profile_service �
 ```
 src/main/java/com/socialflux/auth/
   config/     propriedades (env), chaves RSA, JwtEncoder/Decoder
-  domain/     entidades JPA e repositórios (account, refresh_token, email_token, audit_event)
+  domain/     entidades JPA e repositórios (account, refresh_token, email_token)
   service/    AccountService, TokenService, RevocationRegistry, RateLimiter, PasswordService...
   security/   filtros (JWT em Bearer/cookie, Origin), SecurityConfig
   web/        controllers, DTOs, tratamento de erros

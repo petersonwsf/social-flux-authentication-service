@@ -13,6 +13,7 @@ web (controllers, DTOs, erros, cookies)
   └─► service (regras: contas, tokens, senhas, revogação, limites)
         ├─► domain (entidades JPA + repositórios) ─► PostgreSQL
         ├─► Outbox (libs/socialflux-events) ─► OutboxRelay ─► RabbitMQ
+        ├─► AuditRecorder (libs/socialflux-audit) ─► audit_outbox ─► relay ─► audit-service
         ├─► profile (cliente HTTP do profile_service + token de serviço)
         └─► mail (e-mails transacionais)
 security (filtros JWT/Origin + SecurityConfig) envolve tudo; config carrega propriedades e chaves.
@@ -22,7 +23,7 @@ security (filtros JWT/Origin + SecurityConfig) envolve tudo; config carrega prop
 
 ```
 authentication_service/
-├── Dockerfile                    build Maven multi-stage (contexto = raiz do repo, para incluir libs/socialflux-events); runtime Temurin 21 JRE Alpine, usuário sem root
+├── Dockerfile                    build Maven multi-stage (contexto = raiz do repo, para incluir libs/socialflux-events e libs/socialflux-audit); runtime Temurin 21 JRE Alpine, usuário sem root
 ├── .gitignore                    exclui target/, IDE, *.pem e .env (o .dockerignore é o da raiz)
 ├── pom.xml                       dependências (Spring Boot 4.1, Security, OAuth2 JOSE, JPA, Flyway, AMQP, Mail, BouncyCastle; testes: embedded-postgres, H2)
 ├── README.md                     decisões, API, configuração, rotação de chaves, cadastro e eventos
@@ -73,8 +74,6 @@ authentication_service/
 | `RefreshTokenRepository.java` | Busca por hash, revogação da família/da conta inteira e expurgo de tokens vencidos |
 | `EmailToken.java` | Entidade `email_token`: token de uso único (`VERIFY_EMAIL` ou `RESET_PASSWORD`), só o hash é guardado |
 | `EmailTokenRepository.java` | Busca por hash, invalidação dos pendentes e expurgo dos vencidos |
-| `AuditEvent.java` | Entidade `audit_event`: trilha de auditoria (ação, IP, user-agent, detalhe) |
-| `AuditEventRepository.java` | Repositório JPA da auditoria |
 
 ### Eventos (sem pacote próprio)
 
@@ -119,7 +118,7 @@ fica pendente). `AccountService` grava `account.registered.v1` e `account.delete
 | `PasswordService.java` | Hash Argon2id; aceita BCrypt legado (`{bcrypt}`) e indica quando regravar; hash fictício contra ataques de tempo |
 | `PasswordPolicy.java` | Política de senha no servidor (8–128 caracteres, recusa senhas comuns e senha igual ao e-mail ou à parte local dele) |
 | `RateLimiter.java` | Janela deslizante em memória: falhas por e-mail+IP e por IP (1 instância) |
-| `AuditService.java` | Grava eventos de auditoria em transação própria |
+| `AuditService.java` | Auditoria: delega ao `AuditRecorder` da `socialflux-audit` (`LOGIN_FAILURE`/`REFRESH_REUSE` em modo `independent`, o resto na transação de quem chama) |
 | `MaintenanceJobs.java` | Limpeza agendada de tokens vencidos e de contas excluídas há mais de 1 dia |
 | `RegisterCommand.java` | Dados de cadastro já extraídos da requisição |
 | `IssuedSession.java` | Tokens emitidos e seus instantes (`expiresAt`, `renewAt`), só em memória |
@@ -153,12 +152,15 @@ fica pendente). `AccountService` grava `account.registered.v1` e `account.delete
 | `db/migration/V1__identity.sql` | Tabelas `account`, `account_role`, `refresh_token`, `email_token`, `audit_event` |
 | `db/migration/V2__outbox.sql` | Tabela `outbox_event` |
 | `db/migration/V3__remove_legacy_user_id.sql` | Remove `account.legacy_user_id`: o id inteiro temporário não existe mais, só o UUID (`sub`) |
+| `db/migration/V4__audit_outbox.sql` | Tabela `audit_outbox` (auditoria central) e cópia única do histórico de `audit_event` para ela; `audit_event` fica sem gravações até uma migração futura removê-la |
 
 ### `src/test/java/com/socialflux/auth/`
 
 | Arquivo | O que representa |
 | --- | --- |
 | `AuthFlowTest.java` | Integração ponta a ponta: cadastro, login, refresh/rotação, revogação, senhas, e-mail, exclusão e eventos |
+| `AuditTest.java` | Eventos de auditoria do fluxo (registro, login, falha, revogação, troca de senha) no recorder em memória, sem dado pessoal |
+| `AuditBackfillMigrationTest.java` | A migração V4 copia o histórico de `audit_event` para `audit_outbox` com eventId determinístico |
 | `PasswordUpgradeTest.java` | Hash BCrypt importado faz login e é regravado em Argon2id |
 | `ServiceTokenTest.java` | Formato e restrições do token de serviço para o profile_service |
 | `UnitTests.java` | Testes de unidade: UUIDv7 e carregamento/validação das chaves RSA (inclusive rotação) |
